@@ -1,0 +1,43 @@
+✅ Product Found:
+Barcode: 5449000131805
+Name: Coca-Cola Zero
+Categories: [
+  'en:beverages-and-beverages-preparations',
+  'en:beverages',
+  'en:carbonated-drinks',
+  'en:artificially-sweetened-beverages',
+  'en:sodas',
+  'en:diet-beverages',
+  'en:colas',
+  'en:diet-sodas',
+  'en:diet-cola-soft-drink'
+]
+Ingredients: carbonated water, colour (caramel e150d), acid (phosphoric acid), sweeteners (aspartame, acesulfame k), natural flavourings (including caffeine), acidity regulator (sodium citrates) contains a source of phenylalanine,
+Sugar (g): undefined
+-
+✅ Product Found:
+Barcode: 3017620422003
+Name: Nutella
+Categories: [
+  'en:breakfasts',
+  'en:spreads',
+  'en:sweet-spreads',
+  'fr:pates-a-tartiner',
+  'en:hazelnut-spreads'
+]
+Ingredients: Sucre, huile de palme, NOISETTES 13%, cacao maigre 7,4%, LAIT écrémé en poudre 6,6%, LACTOSERUM en poudre, émulsifiants: lécithines [SOJA), vanilline. Sans gluten.
+Sugar (g): 56.3
+-
+✅ Product Found:
+Barcode: 028400040044
+Name: Chili Cheese Flavored Corn Chips
+Categories: [
+  'en:snacks',
+  'en:salty-snacks',
+  'en:appetizers',
+  'en:chips-and-fries',
+  'en:crisps',
+  'en:corn-chips'
+]
+Ingredients: Corn, corn oil, whey, salt, spices, maltodextrin (made from corn), cheddar cheese (milk, cheese cultures, enzymes), canola oil, potassium chloride, tomato powder, monosodium glutamate, onion powder, natural flavors, Romano cheese (cow's milk, cheese cultures, salt, enzymes), dextrose, buttermilk, sodium caseinate, annatto extracts, cream, salt, citric acid, sunflower oil, garlic powder, disodium inosinate, disodium guanylate, and caramel color.
+Sugar (g): 0
