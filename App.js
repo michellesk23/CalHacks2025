@@ -1,18 +1,75 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  StyleSheet, 
-  Text, 
-  View, 
-  TouchableOpacity, 
-  Image, 
+import {
+  StyleSheet,
+  Text,
+  View,
+  TouchableOpacity,
+  Image,
   ScrollView,
   Alert,
   Linking,
   ActivityIndicator,
-  Platform
+  Platform,
+  NetInfo, // <-- Added for network check, essential for real backend
 } from 'react-native';
 import { CameraView, Camera } from 'expo-camera';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// =================================================================
+// ⚙️ BACKEND / MOCK CONFIGURATION ⚙️
+// =================================================================
+// 1. Set this to false when your backend is ready.
+const USE_MOCK_DATA = true;
+
+// 2. Set your backend URL here.
+// Use 'http://10.0.2.2:3000' for Android Emulator 
+// or 'http://localhost:3000' for iOS Simulator/Web (if your server runs on port 3000)
+// const BASE_URL = 'http://localhost:3000'; 
+// const API_ENDPOINT = `${BASE_URL}/api/check-eligibility`; EDIT THIS
+
+// 3. Mock Data Structure (kept for mock mode)
+const MOCK_DATA = {
+  '049000050103': {
+    name: 'Coca-Cola Classic',
+    barcode: '049000050103',
+    image: 'https://images.unsplash.com/photo-1554866585-cd94860890b7?w=400',
+    eligible: false,
+    reason: 'Sugary beverages are not SNAP eligible in Idaho per HB 109',
+    alternatives: [
+      { name: '100% Apple Juice', emoji: '🧃' },
+      { name: 'Sparkling Water', emoji: '💧' },
+      { name: 'Whole Milk', emoji: '🥛' }
+    ]
+  },
+  '040000000013': {
+    name: 'Snickers Bar',
+    barcode: '040000000013',
+    image: 'https://images.unsplash.com/photo-1599599810769-bcde5a160d32?w=400',
+    eligible: false,
+    reason: 'Candy products are not SNAP eligible in Idaho',
+    alternatives: [
+      { name: 'Nature Valley Granola Bar', emoji: '🥜' },
+      { name: 'Mixed Nuts Trail Mix', emoji: '🌰' },
+      { name: 'Dried Fruit Snacks', emoji: '🍇' }
+    ]
+  },
+  '123456789012': { 
+    name: 'Whole Milk 1 Gallon',
+    barcode: '123456789012',
+    image: 'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=400',
+    eligible: true,
+    reason: 'This product is SNAP eligible in your state'
+  },
+  'default': {
+    name: 'Unknown Product',
+    barcode: '',
+    image: 'https://images.unsplash.com/photo-1542838132-92c75a40b923?w=400',
+    eligible: true,
+    reason: 'Product information unavailable. Assuming eligible.'
+  }
+};
+// =================================================================
+
 
 export default function App() {
   const [hasPermission, setHasPermission] = useState(null);
@@ -21,10 +78,19 @@ export default function App() {
   const [productData, setProductData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [queuedScans, setQueuedScans] = useState([]);
+  const [isConnected, setIsConnected] = useState(true);
 
   useEffect(() => {
     getCameraPermissions();
     loadQueue();
+    
+    // Setup network status listener for offline handling
+    const unsubscribe = NetInfo.addEventListener(state => {
+        const isOnline = state.isConnected && state.isInternetReachable !== false;
+        setIsConnected(isOnline);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const getCameraPermissions = async () => {
@@ -48,56 +114,78 @@ export default function App() {
       const newQueue = [...queuedScans, { barcode, timestamp: Date.now() }];
       await AsyncStorage.setItem('scanQueue', JSON.stringify(newQueue));
       setQueuedScans(newQueue);
+      Alert.alert(
+        "Offline",
+        "You are offline. Product saved to queue and will be checked later."
+      );
     } catch (e) {
       console.log('Error saving to queue:', e);
     }
   };
 
-  const checkProduct = async (barcode) => {
-    setLoading(true);
-    
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    const mockData = {
-      '049000050103': {
-        name: 'Coca-Cola Classic',
-        barcode: barcode,
-        image: 'https://images.unsplash.com/photo-1554866585-cd94860890b7?w=400',
-        eligible: false,
-        reason: 'Sugary beverages are not SNAP eligible in Idaho per HB 109',
-        alternatives: [
-          { name: '100% Apple Juice', emoji: '🧃' },
-          { name: 'Sparkling Water', emoji: '💧' },
-          { name: 'Whole Milk', emoji: '🥛' }
-        ]
-      },
-      '040000000013': {
-        name: 'Snickers Bar',
-        barcode: barcode,
-        image: 'https://images.unsplash.com/photo-1599599810769-bcde5a160d32?w=400',
-        eligible: false,
-        reason: 'Candy products are not SNAP eligible in Idaho',
-        alternatives: [
-          { name: 'Nature Valley Granola Bar', emoji: '🥜' },
-          { name: 'Mixed Nuts Trail Mix', emoji: '🌰' },
-          { name: 'Dried Fruit Snacks', emoji: '🍇' }
-        ]
-      },
-      'default': {
-        name: 'Whole Milk 1 Gallon',
-        barcode: barcode,
-        image: 'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=400',
-        eligible: true,
-        reason: 'This product is SNAP eligible in your state'
-      }
-    };
-    
-    const data = mockData[barcode] || mockData['default'];
-    
-    setProductData(data);
-    setScreen('result');
+  const handleError = (message, error) => {
+    console.error(message, error);
+    Alert.alert("Error", "Could not check eligibility. Please try again.");
     setLoading(false);
   };
+
+
+  // ------------------------------------------------------------------
+  // 🔄 Unified checkProduct function with Backend/Mock switch
+  // ------------------------------------------------------------------
+  const checkProduct = async (barcode) => {
+    setLoading(true);
+
+    if (USE_MOCK_DATA) {
+      // 🧪 MOCK DATA PATH (Original logic)
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const data = MOCK_DATA[barcode] || MOCK_DATA['default'];
+      
+      setProductData(data);
+      setScreen('result');
+      setLoading(false);
+      return;
+    }
+
+    if (!isConnected) {
+      // 💾 OFFLINE PATH
+      saveToQueue(barcode);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      // 💻 LIVE API PATH
+      const response = await fetch(`${API_ENDPOINT}/${barcode}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          // Optional: 'Authorization': 'Bearer YOUR_AUTH_TOKEN',
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          Alert.alert("Not Found", `Barcode ${barcode} not found.`);
+        } else {
+          Alert.alert("Server Error", `Status: ${response.status}.`);
+        }
+        return; 
+      }
+
+      const data = await response.json();
+      
+      setProductData(data);
+      setScreen('result');
+
+    } catch (error) {
+      handleError("API call failed. Server offline or unreachable.", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  // ------------------------------------------------------------------
+
 
   const resetScanner = () => {
     setScanned(false);
@@ -107,7 +195,7 @@ export default function App() {
 
   const openInMaps = (productName) => {
     const query = encodeURIComponent(productName);
-    const url = Platform.OS === 'ios' 
+    const url = Platform.OS === 'ios'
       ? `maps://maps.apple.com/?q=${query}`
       : `geo:0,0?q=${query}`;
     Linking.openURL(url);
@@ -120,8 +208,10 @@ export default function App() {
         <View style={styles.header}>
           <View style={styles.headerContent}>
             <Text style={styles.appTitle}>SNAP Scanner</Text>
-            <View style={styles.testBadge}>
-              <Text style={styles.testBadgeText}>TEST MODE</Text>
+            <View style={[styles.testBadge, !USE_MOCK_DATA && styles.liveBadge, !isConnected && !USE_MOCK_DATA && styles.offlineBadge]}>
+              <Text style={styles.testBadgeText}>
+                {USE_MOCK_DATA ? 'MOCK MODE' : isConnected ? 'LIVE MODE' : 'OFFLINE'}
+              </Text>
             </View>
           </View>
         </View>
@@ -136,11 +226,11 @@ export default function App() {
               Tap any product to see instant SNAP eligibility results
             </Text>
           </View>
-            
+
           <View style={styles.productsSection}>
             <Text style={styles.sectionTitle}>Sample Products</Text>
-            
-            <TouchableOpacity 
+
+            <TouchableOpacity
               style={styles.productCard}
               onPress={() => checkProduct('049000050103')}
               activeOpacity={0.7}
@@ -153,13 +243,13 @@ export default function App() {
                   <Text style={styles.productTitle}>Coca-Cola Classic</Text>
                   <Text style={styles.productSubtitle}>12 fl oz can • Soft Drink</Text>
                 </View>
-                <View style={[styles.statusPill, styles.notEligiblePill]}>
-                  <Text style={styles.statusPillText}>Not Eligible</Text>
+                <View style={[styles.statusPill, USE_MOCK_DATA ? styles.notEligiblePill : styles.checkPill]}>
+                  <Text style={styles.statusPillText}>{USE_MOCK_DATA ? 'Not Eligible' : 'Check →'}</Text>
                 </View>
               </View>
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.productCard}
               onPress={() => checkProduct('040000000013')}
               activeOpacity={0.7}
@@ -172,13 +262,13 @@ export default function App() {
                   <Text style={styles.productTitle}>Snickers Bar</Text>
                   <Text style={styles.productSubtitle}>1.86 oz • Candy</Text>
                 </View>
-                <View style={[styles.statusPill, styles.notEligiblePill]}>
-                  <Text style={styles.statusPillText}>Not Eligible</Text>
+                <View style={[styles.statusPill, USE_MOCK_DATA ? styles.notEligiblePill : styles.checkPill]}>
+                  <Text style={styles.statusPillText}>{USE_MOCK_DATA ? 'Not Eligible' : 'Check →'}</Text>
                 </View>
               </View>
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.productCard}
               onPress={() => checkProduct('123456789012')}
               activeOpacity={0.7}
@@ -191,8 +281,8 @@ export default function App() {
                   <Text style={styles.productTitle}>Whole Milk</Text>
                   <Text style={styles.productSubtitle}>1 gallon • Dairy</Text>
                 </View>
-                <View style={[styles.statusPill, styles.eligiblePill]}>
-                  <Text style={styles.statusPillText}>Eligible</Text>
+                <View style={[styles.statusPill, USE_MOCK_DATA ? styles.eligiblePill : styles.checkPill]}>
+                  <Text style={styles.statusPillText}>{USE_MOCK_DATA ? 'Eligible' : 'Check →'}</Text>
                 </View>
               </View>
             </TouchableOpacity>
@@ -200,7 +290,7 @@ export default function App() {
         </ScrollView>
 
         {queuedScans.length > 0 && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.floatingButton}
             onPress={() => setScreen('queue')}
             activeOpacity={0.9}
@@ -224,7 +314,7 @@ export default function App() {
   // RESULT SCREEN
   if (screen === 'result' && productData) {
     const isEligible = productData.eligible !== false;
-    
+
     return (
       <View style={styles.container}>
         <View style={[styles.header, styles.resultHeader]}>
@@ -238,8 +328,8 @@ export default function App() {
         <ScrollView style={styles.resultContainer}>
           {productData.image && (
             <View style={styles.imageContainer}>
-              <Image 
-                source={{ uri: productData.image }} 
+              <Image
+                source={{ uri: productData.image }}
                 style={styles.productImage}
               />
             </View>
@@ -272,14 +362,14 @@ export default function App() {
                 <Text style={styles.alternativesSubheader}>
                   These SNAP-eligible items are available nearby
                 </Text>
-                
+
                 {productData.alternatives.map((alt, index) => (
                   <View key={index} style={styles.alternativeCard}>
                     <View style={styles.alternativeLeft}>
                       <Text style={styles.alternativeEmoji}>{alt.emoji}</Text>
                       <Text style={styles.alternativeName}>{alt.name}</Text>
                     </View>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={styles.findButton}
                       onPress={() => openInMaps(alt.name)}
                       activeOpacity={0.7}
@@ -291,8 +381,8 @@ export default function App() {
               </View>
             )}
 
-            <TouchableOpacity 
-              style={styles.scanAnotherButton} 
+            <TouchableOpacity
+              style={styles.scanAnotherButton}
               onPress={resetScanner}
               activeOpacity={0.8}
             >
@@ -323,7 +413,7 @@ export default function App() {
               These items will be checked when you reconnect to the internet
             </Text>
           </View>
-          
+
           {queuedScans.map((item, index) => (
             <View key={index} style={styles.queueCard}>
               <View style={styles.queueCardIcon}>
@@ -377,6 +467,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
+  },
+  liveBadge: {
+    backgroundColor: '#1A73E8', // Blue for Live Mode
+  },
+  offlineBadge: {
+    backgroundColor: '#EA4335', // Red for Offline Mode
   },
   testBadgeText: {
     color: '#fff',
@@ -506,6 +602,11 @@ const styles = StyleSheet.create({
   },
   notEligiblePill: {
     backgroundColor: '#fce8e6',
+  },
+  checkPill: { 
+    backgroundColor: '#f1f3f4', 
+    borderWidth: 1,
+    borderColor: '#ccc',
   },
   statusPillText: {
     fontSize: 12,
