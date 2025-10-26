@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Barcode Detection Frontend</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .upload-section {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            background-color: #fafafa;
+        }
+        .upload-section.dragover {
+            border-color: #007bff;
+            background-color: #e3f2fd;
+        }
+        input[type="file"] {
+            margin: 10px 0;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 5px;
+            display: none;
+        }
+        .result.success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .result.error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .result.no-barcode {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+        .loading {
+            text-align: center;
+            color: #666;
+        }
+        .image-preview {
+            max-width: 100%;
+            max-height: 300px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .barcode-info {
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .camera-section {
+            margin: 20px 0;
+            text-align: center;
+        }
+        video {
+            max-width: 100%;
+            border-radius: 5px;
+        }
+        canvas {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Barcode Detection</h1>
+        
+        <!-- File Upload Section -->
+        <div class="upload-section" id="uploadSection">
+            <h3>Upload Image</h3>
+            <p>Drag and drop an image here or click to select</p>
+            <input type="file" id="fileInput" accept="image/*">
+            <br>
+            <button onclick="document.getElementById('fileInput').click()">Choose File</button>
+            <button onclick="processFile()" id="processBtn" disabled>Detect Barcode</button>
+        </div>
+
+        <!-- Camera Section -->
+        <div class="camera-section">
+            <h3>Or Use Camera</h3>
+            <video id="video" autoplay></video>
+            <canvas id="canvas"></canvas>
+            <br>
+            <button onclick="startCamera()">Start Camera</button>
+            <button onclick="captureAndDetect()" id="captureBtn" disabled>Capture & Detect</button>
+            <button onclick="stopCamera()">Stop Camera</button>
+        </div>
+
+        <!-- Results Section -->
+        <div id="result" class="result">
+            <h3>Detection Result</h3>
+            <div id="resultContent"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+        let selectedFile = null;
+        let stream = null;
+
+        // File upload handling
+        const fileInput = document.getElementById('fileInput');
+        const uploadSection = document.getElementById('uploadSection');
+        const processBtn = document.getElementById('processBtn');
+
+        fileInput.addEventListener('change', (e) => {
+            selectedFile = e.target.files[0];
+            processBtn.disabled = !selectedFile;
+            if (selectedFile) {
+                showImagePreview(selectedFile);
+            }
+        });
+
+        // Drag and drop handling
+        uploadSection.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadSection.classList.add('dragover');
+        });
+
+        uploadSection.addEventListener('dragleave', () => {
+            uploadSection.classList.remove('dragover');
+        });
+
+        uploadSection.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                selectedFile = files[0];
+                fileInput.files = files;
+                processBtn.disabled = false;
+                showImagePreview(selectedFile);
+            }
+        });
+
+        function showImagePreview(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = document.createElement('img');
+                img.src = e.target.result;
+                img.className = 'image-preview';
+                img.alt = 'Preview';
+                
+                // Remove existing preview
+                const existingPreview = uploadSection.querySelector('.image-preview');
+                if (existingPreview) {
+                    existingPreview.remove();
+                }
+                
+                uploadSection.appendChild(img);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function processFile() {
+            if (!selectedFile) return;
+
+            showLoading();
+            
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/detect-barcode`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                showResult(result);
+            } catch (error) {
+                showError('Error processing image: ' + error.message);
+            }
+        }
+
+        // Camera functionality
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const captureBtn = document.getElementById('captureBtn');
+
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: 'environment' // Use back camera on mobile
+                    } 
+                });
+                video.srcObject = stream;
+                captureBtn.disabled = false;
+            } catch (error) {
+                showError('Error accessing camera: ' + error.message);
+            }
+        }
+
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+                video.srcObject = null;
+                captureBtn.disabled = true;
+            }
+        }
+
+        async function captureAndDetect() {
+            if (!stream) return;
+
+            // Capture image from video
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+
+            // Convert to base64
+            const imageData = canvas.toDataURL('image/jpeg').split(',')[1];
+
+            showLoading();
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/detect-barcode-base64`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ image: imageData })
+                });
+
+                const result = await response.json();
+                showResult(result);
+            } catch (error) {
+                showError('Error processing image: ' + error.message);
+            }
+        }
+
+        function showLoading() {
+            const resultDiv = document.getElementById('result');
+            const contentDiv = document.getElementById('resultContent');
+            
+            resultDiv.className = 'result';
+            resultDiv.style.display = 'block';
+            contentDiv.innerHTML = '<div class="loading">🔄 Processing image...</div>';
+        }
+
+        function showResult(result) {
+            const resultDiv = document.getElementById('result');
+            const contentDiv = document.getElementById('resultContent');
+            
+            resultDiv.style.display = 'block';
+            
+            if (result.success) {
+                resultDiv.className = 'result success';
+                contentDiv.innerHTML = `
+                    <div class="barcode-info">
+                        <h4>✅ Barcode Detected!</h4>
+                        <p><strong>Barcode Text:</strong> ${result.barcode_text}</p>
+                        <p><strong>File:</strong> ${result.filename || 'Camera capture'}</p>
+                    </div>
+                `;
+            } else {
+                resultDiv.className = 'result no-barcode';
+                contentDiv.innerHTML = `
+                    <div>
+                        <h4>❌ No Barcode Found</h4>
+                        <p>No barcode was detected in the image. Please try a different image or ensure the barcode is clearly visible.</p>
+                    </div>
+                `;
+            }
+        }
+
+        function showError(message) {
+            const resultDiv = document.getElementById('result');
+            const contentDiv = document.getElementById('resultContent');
+            
+            resultDiv.className = 'result error';
+            resultDiv.style.display = 'block';
+            contentDiv.innerHTML = `
+                <div>
+                    <h4>❌ Error</h4>
+                    <p>${message}</p>
+                </div>
+            `;
+        }
+
+        // Clean up camera when page unloads
+        window.addEventListener('beforeunload', stopCamera);
+    </script>
+</body>
+</html>
+
