@@ -130,12 +130,34 @@ async def eligibility_lookup(barcode: str):
     Lookup product by barcode via OpenFoodFacts and return Idaho SNAP eligibility.
     """
     try:
-        off_url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
-        resp = requests.get(off_url, timeout=8)
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail="OpenFoodFacts upstream error")
-        data = resp.json()
-        if not data or data.get("status") != 1:
+        # Try primary OFF endpoint, then fallback to US mirror
+        urls = [
+            f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json",
+            f"https://us.openfoodfacts.org/api/v0/product/{barcode}.json",
+        ]
+
+        data = None
+        last_error = None
+        for url in urls:
+            try:
+                resp = requests.get(url, timeout=5)
+                if resp.status_code == 200:
+                    d = resp.json()
+                    if d and d.get("status") == 1:
+                        data = d
+                        break
+                    elif d and d.get("status") == 0:
+                        # Explicit not found
+                        data = d
+                        break
+                else:
+                    last_error = f"HTTP {resp.status_code} from {url}"
+            except Exception as e:
+                last_error = str(e)
+
+        if data is None:
+            raise HTTPException(status_code=502, detail=f"OpenFoodFacts unreachable: {last_error or 'unknown error'}")
+        if data.get("status") != 1:
             raise HTTPException(status_code=404, detail="Product not found")
 
         p = data.get("product", {})

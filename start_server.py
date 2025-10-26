@@ -24,10 +24,10 @@ def main():
         print("❌ barcode_image.py not found in current directory")
         sys.exit(1)
     
-    print("🚀 Starting Barcode Detection API Server...")
-    print("📡 Server will be available at: http://localhost:8000")
-    print("📖 API documentation at: http://localhost:8000/docs")
-    print("🛑 Press Ctrl+C to stop the server")
+    print("Starting Barcode Detection API Server...")
+    print("Server will be available at: http://localhost:8000")
+    print("API documentation at: http://localhost:8000/docs")
+    print("Press Ctrl+C to stop the server")
     print("-" * 50)
     
     try:

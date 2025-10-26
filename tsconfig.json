@@ -12,7 +12,6 @@
   "include": [
     "mobile/src/**/*.ts",
     "scripts/**/*.ts"
-  ]
+  ],
+  "extends": "expo/tsconfig.base"
 }
-
-

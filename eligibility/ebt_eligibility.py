@@ -54,6 +54,7 @@ def check_eligibility(product: dict) -> dict:
     eligible = True
     reason = None
     user_tips = []
+    juice_potential = False
     confidence_reasons = []  # track explanations for reduced confidence
 
     sensitive_cats = ("beverage", "drink", "candy", "dessert", "snack", "sweet")
