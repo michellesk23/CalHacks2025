@@ -11,6 +11,11 @@ export async function fetchOffProduct(barcode: string): Promise<OffProductRespon
     "ingredients",
     "categories_tags",
     "nutriments",
+    "image_front_url",
+    "image_url",
+    "image_ingredients_url",
+    "image_nutrition_url",
+    "selected_images",
   ].join(",");
 
   const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(

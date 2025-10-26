@@ -138,6 +138,7 @@ async function run(barcodes) {
         console.log("Categories:", p.categories);
         console.log("Ingredients:", p.ingredientsText);
         console.log("Sugar (g per 100g):", p.nutrients.sugars_100g);
+        if (p.imageFrontUrl) console.log("Image:", p.imageFrontUrl);
       } else {
         console.log("❌ Product not found:", b);
       }

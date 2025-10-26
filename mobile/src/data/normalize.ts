@@ -76,6 +76,19 @@ export function normalizeOffProduct(resp: OffProductResponse): EligibilityInput 
       fat_100g: coerceNumber((nutriments as any)["fat_100g"]) ?? undefined,
     },
     juicePercent: extractJuicePercent(p),
+    imageFrontUrl:
+      (p as any).image_front_url ||
+      ((p as any).selected_images && (p as any).selected_images.front?.display?.en) ||
+      (p as any).image_url ||
+      null,
+    imageIngredientsUrl:
+      (p as any).image_ingredients_url ||
+      ((p as any).selected_images && (p as any).selected_images.ingredients?.display?.en) ||
+      null,
+    imageNutritionUrl:
+      (p as any).image_nutrition_url ||
+      ((p as any).selected_images && (p as any).selected_images.nutrition?.display?.en) ||
+      null,
   };
 }
 

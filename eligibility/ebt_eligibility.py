@@ -99,7 +99,9 @@ def check_eligibility(product: dict) -> dict:
             "reason": "Insufficient data to determine eligibility.",
             "confidence": round(confidence, 2),
             "policy_version": POLICY_VERSION,
-            "user_tips": user_tips or ["Try scanning again or check the product label."]
+            "user_tips": user_tips or ["Try scanning again or check the product label."],
+            "data_source": product.get("source"),
+            "source_meta": product.get("source_meta"),
         }
 
     return {
@@ -107,7 +109,10 @@ def check_eligibility(product: dict) -> dict:
         "reason": reason or "Eligible under Idaho SNAP policy.",
         "confidence": round(confidence, 2),
         "policy_version": POLICY_VERSION,
-        "user_tips": user_tips
+        "user_tips": user_tips,
+        # Echo back data origin if provided by the caller (e.g., "off" or "fdc")
+        "data_source": product.get("source"),
+        "source_meta": product.get("source_meta"),
     }
 
 def format_off_product(product_info: dict) -> dict:

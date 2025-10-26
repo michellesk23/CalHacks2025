@@ -15,6 +15,11 @@ export interface OffProduct {
   ingredients?: OffIngredient[];
   categories_tags?: string[];
   nutriments?: Record<string, number | string | undefined>;
+  image_front_url?: string;
+  image_url?: string;
+  image_ingredients_url?: string;
+  image_nutrition_url?: string;
+  selected_images?: any;
 }
 
 export interface OffProductResponse {
@@ -44,6 +49,9 @@ export interface EligibilityInput {
     fat_100g?: number;
   };
   juicePercent: number | null;
+  imageFrontUrl: string | null;
+  imageIngredientsUrl: string | null;
+  imageNutritionUrl: string | null;
 }
 
 export type GetEligibilityInputResult =
