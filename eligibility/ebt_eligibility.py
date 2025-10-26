@@ -18,11 +18,30 @@ def estimate_juice_percent(ingredients_text: str) -> float:
         return 25.0
     return 0.0
 
+def is_prepared_food(product):
+    categories = [c.lower().strip() for c in product.get("Categories") or product.get("categories", [])]
+    name = (product.get("Name") or product.get("name", "")).lower()
+
+    prepped_keywords = [
+        "hot", "rotisserie", "ready to eat", "freshly prepared",
+        "ready meal", "ready-to-eat"
+    ]
+    prepped_categories = ["en:ready-meals", "en:prepared-meals", "en:cooked-meals"]
+
+    # Check category matches
+    if any(cat in prepped_categories for cat in categories):
+        return True
+
+    # Check if name implies it's hot/prepared
+    if any(k in name for k in prepped_keywords):
+        return True
+
+    return False
 
 def check_eligibility(product: dict) -> dict:
     """
     Determine Idaho EBT eligibility based on HB109 + 2026 sweetened beverage ban.
-    Returns dict with eligible, reason, confidence, policy_version, user_tips.
+    Returns dict with eligible, reason, confidence, policy_version, user_tips, and confidence_reason.
     """
 
     categories = product.get("categories", [])
@@ -35,30 +54,55 @@ def check_eligibility(product: dict) -> dict:
     eligible = True
     reason = None
     user_tips = []
+    confidence_reasons = []  # track explanations for reduced confidence
+
+    sensitive_cats = ("beverage", "drink", "candy", "dessert", "snack", "sweet")
+    category_text = " ".join(categories).lower()
 
     # --- 1️⃣ Missing data penalties ---
     if not categories:
         confidence -= 0.25
+        confidence_reasons.append("Missing categories")
         user_tips.append("Check the product type — sodas and candies are not eligible, but staple foods are.")
-    if not nutrients:
+    if any(sc in category_text for sc in sensitive_cats):
+        if not nutrients:
+            confidence -= 0.15
+            confidence_reasons.append("Missing nutrient data for sensitive category")
+        if not ingredients:
+            confidence -= 0.10
+            confidence_reasons.append("Missing ingredients for sensitive category")
+        if not categories and not ingredients:
+            confidence -= 0.1
+            confidence_reasons.append("Both categories and ingredients missing")
+    else:
+        # For staples, missing fields are fine
+        pass
+
+    if is_prepared_food(product):
         confidence -= 0.15
-    if not ingredients:
-        confidence -= 0.10
-    if not categories and not ingredients:
-        confidence -= 0.1  # both missing → extra penalty
+        user_tips.append("Item may be sold hot or cold. If sold hot and ready to eat, it's not eligible for EBT.")
+        return {
+            "eligible": None,
+            "reason": "Item may be a hot prepared food; eligibility cannot be determined without knowing how it is sold.",
+            "confidence": round(confidence, 2),
+            "policy_version": POLICY_VERSION,
+            "user_tips": user_tips
+        }
 
     # --- 2️⃣ Ingredient ambiguity ---
     if ingredients and len(ingredients.split(",")) < 3 and not any(
         word in ingredients for word in ["sugar", "juice", "milk", "sweetener"]
     ):
         confidence -= 0.1
+        confidence_reasons.append("vague or minimal ingredient list")
         user_tips.append("Ingredient list is minimal or vague; verify the label for clarity.")
 
     # --- 3️⃣ Category genericness ---
     if categories and len(categories) <= 2 and all(
         kw in categories[0] for kw in ["beverages", "foods"]
     ):
-        confidence -= 0.05  # mild penalty for generic categories
+        confidence -= 0.05
+        confidence_reasons.append("Generic or broad category classification")
 
     # --- 4️⃣ Idaho disallowed categories ---
     banned_categories = {
@@ -82,10 +126,13 @@ def check_eligibility(product: dict) -> dict:
         milk_based = any("milk" in cat for cat in categories)
         mixable = any(word in name for word in ["mix", "powder", "concentrate"])
 
+        juice_potential = False
+
         if has_sweetener:
-            # Coca-Cola Zero–like products: artificially sweetened, no sugar info
+            # Coca-Cola Zero–like products
             if "aspartame" in ingredients or "sucralose" in ingredients or "acesulfame" in ingredients:
-                confidence -= 0.1  # confident it's banned, but uncertain nuance
+                confidence -= 0.1
+                confidence_reasons.append("artificial sweeteners detected")
             if not milk_based and juice_percent <= 50 and not mixable:
                 eligible = False
                 reason = (
@@ -93,40 +140,48 @@ def check_eligibility(product: dict) -> dict:
                     "unless >50% juice, milk-based, or mixable."
                 )
         else:
-            # Heuristic juice estimation (no explicit %)
+            # Heuristic juice estimation
             if "juice" in ingredients and not re.search(r'\d{1,3}\s*%', ingredients):
                 confidence -= 0.15
+                confidence_reasons.append("Juice mentioned but no % provided so estimate may be uncertain")
                 user_tips.append(
-                "Juice mentioned but no % provided so estimate may be uncertain; check the label for exact juice content. "
-                "If there's at least 50% juice, it's eligible"
+                    "Juice estimate uncertain; check the label for exact juice content. "
+                    "If there's at least 50% juice, it's eligible"
                 )
                 juice_potential = True
-            # --- Sweetener unknown / missing ---
+
+            # Missing sugar data
             if not nutrients.get("total_sugars_g"):
                 eligible = None
                 confidence = min(confidence, 0.7)
+                confidence_reasons.append("Missing sugar data for beverage")
                 reason = "Insufficient data to determine eligibility."
-                if (juice_potential == False):
+                if not juice_potential:
                     user_tips.append(
                         "Check if this beverage contains natural or artificial sweeteners. If so, it is most likely not eligible."
-                    )    
+                    )
 
-        # Edge case: borderline juice %
         if 40 <= juice_percent <= 60:
             confidence -= 0.05
+            confidence_reasons.append("Potential borderline juice percentage (40–60%)")
+            user_tips.append(
+                    "Juice estimate uncertain; check the label for exact juice content. "
+                    "If there's at least 50% juice, it's eligible"
+            )
 
     # --- 6️⃣ Federal disallowed items ---
-    federal_disallowed_keywords = ["alcohol", "hot", "supplement"]
+    federal_disallowed_keywords = ["alcohol", "supplement"]
     federal_disallowed_categories = ["en:dietary-supplements"]
     if any(f in name for f in federal_disallowed_keywords) or any(
         c in categories for c in federal_disallowed_categories
     ):
         eligible = False
-        reason = "Federal rule: hot foods, alcohol, and supplements not eligible."
+        reason = "Federal rule: alcohol and supplements not eligible."
 
     # --- 7️⃣ Non-US barcode → minor uncertainty
     if barcode and not barcode.startswith(("0", "1")):
         confidence -= 0.1
+        confidence_reasons.append("Non-U.S. barcode (potential data mismatch)")
         user_tips.append("Barcode may not correspond to a U.S. product; verify country of origin.")
 
     # --- 8️⃣ Confidence threshold ---
@@ -135,6 +190,7 @@ def check_eligibility(product: dict) -> dict:
             "eligible": None,
             "reason": "Insufficient data to determine eligibility.",
             "confidence": round(confidence, 2),
+            "confidence_reason": ", ".join(confidence_reasons) or "Incomplete or uncertain data",
             "policy_version": POLICY_VERSION,
             "user_tips": user_tips or ["Try scanning again or check the product label."]
         }
@@ -143,6 +199,7 @@ def check_eligibility(product: dict) -> dict:
         "eligible": eligible,
         "reason": reason or "Eligible under Idaho SNAP policy.",
         "confidence": round(max(confidence, 0.0), 2),
+        "confidence_reason": ", ".join(confidence_reasons) or "Full confidence",
         "policy_version": POLICY_VERSION,
         "user_tips": user_tips
     }
@@ -192,17 +249,6 @@ if __name__ == "__main__":
             "Sugar (g)": 25
         },
         {
-            "Barcode": "025000040825",
-            "Name": "Simply Orange With Pineapple",
-            "Categories": [
-                "en:plant-based-foods-and-beverages",
-                "en:beverages",
-                "en:plant-based-beverages"
-            ],
-            "Ingredients": "Orange and pineapple juices, natural flavors.",
-            "Sugar (g)": 10
-        },
-        {
             "Barcode": "028400040044",
             "Name": "Chili Cheese Flavored Corn Chips",
             "Categories": [
@@ -250,6 +296,34 @@ if __name__ == "__main__":
             "Categories": ["en:fruit-drinks"],
             "Ingredients": "Contains orange juice, mango puree, natural flavors.",  # empty ingredients, cannot detect sweeteners
             "Sugar (g)": None     # missing nutrients
+        },
+        {
+            "Barcode": "5449000121000",
+            "Name": "Tesco Everyday Value Spaghetti in Tomato Sauce",
+            "Categories": ["en:condiments", "en:sauces", "en:pasta-sauces","en:groceries"],
+            "Ingredients": "", # empty ingredients, cannot detect sweeteners
+            "Sugar (g)": None     # missing nutrients
+        },
+        {
+            "Barcode": "1234567890123",
+            "Name": "Rotisserie Chicken",
+            "Categories": ["en:prepared-meals", "en:chicken-dishes"],
+            "Ingredients": "",
+            "Nutrients": {}
+        }, 
+        {
+            "Barcode": "0987654321098",
+            "Name": "Frozen Pepperoni Pizza",
+            "Categories": ["en:frozen-meals", "en:pizzas"],
+            "Ingredients": "wheat flour, cheese, tomato sauce, pepperoni",
+            "Nutrients": {"energy_kcal": 250, "fat_g": 10, "total_sugars_g": 3}
+        }, 
+        {
+            "Barcode": "9876543210987",
+            "Name": "Ready-to-Eat Deli Sandwich",
+            "Categories": ["en:prepared-meals", "en:sandwiches", "en:deli-foods"],
+            "Ingredients": "Wheat bread, turkey, lettuce, tomato, mayonnaise.",
+            "Nutrients": {"total_sugars_g": 4}
         }
     ]
 
