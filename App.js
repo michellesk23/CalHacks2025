@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -82,6 +82,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [queuedScans, setQueuedScans] = useState([]);
   const [isConnected, setIsConnected] = useState(true);
+  const scanLockRef = useRef(false);
+  const lastRequestRef = useRef({ barcode: null, ts: 0 });
 
   const normalizeBarcode = (raw) => {
     const digits = String(raw || '').replace(/[^0-9]/g, '');
@@ -191,9 +193,18 @@ export default function App() {
   // 🔄 Unified checkProduct function with Backend/Mock switch
   // ------------------------------------------------------------------
   const checkProduct = async (barcode) => {
+    if (loading) return;
     setLoading(true);
 
     const normalized = normalizeBarcode(barcode);
+
+    // Deduplicate same barcode requests within 5 seconds
+    const now = Date.now();
+    if (lastRequestRef.current.barcode === normalized && (now - lastRequestRef.current.ts) < 5000) {
+      setLoading(false);
+      return;
+    }
+    lastRequestRef.current = { barcode: normalized, ts: now };
 
     if (USE_MOCK_DATA) {
       // 🧪 MOCK DATA PATH (Original logic)
@@ -252,6 +263,7 @@ export default function App() {
     setScanned(false);
     setScreen('scan');
     setProductData(null);
+    scanLockRef.current = false;
   };
 
   const openInMaps = (productName) => {
@@ -409,7 +421,8 @@ export default function App() {
   // CAMERA SCREEN
   if (screen === 'camera') {
     const handleBarCodeScanned = ({ data }) => {
-      if (scanned) return;
+      if (scanLockRef.current || scanned) return;
+      scanLockRef.current = true;
       setScanned(true);
       checkProduct(String(data));
     };
@@ -436,13 +449,20 @@ export default function App() {
           </View>
         ) : (
           <View style={{ flex: 1 }}>
-            <CameraView
-              style={styles.cameraView}
-              onBarcodeScanned={handleBarCodeScanned}
-              barcodeScannerSettings={{
-                barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'code39', 'qr']
-              }}
-            />
+            {!scanned ? (
+              <CameraView
+                style={styles.cameraView}
+                onBarcodeScanned={handleBarCodeScanned}
+                barcodeScannerSettings={{
+                  barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'code39', 'qr']
+                }}
+              />
+            ) : (
+              <View style={[styles.cameraView, { alignItems: 'center', justifyContent: 'center' }]}>
+                <ActivityIndicator size="large" color="#34A853" />
+                <Text style={[styles.loadingText, { marginTop: 12 }]}>Processing…</Text>
+              </View>
+            )}
             <View style={styles.cameraFooter}>
               <Text style={styles.cameraHint}>Align the barcode within the frame</Text>
             </View>
