@@ -29,6 +29,7 @@ def check_eligibility(product: dict) -> dict:
     nutrients = product.get("nutrients", {})
     ingredients = product.get("ingredients", "").lower()
     name = product.get("name", "").lower()
+    barcode = str(product.get("barcode", ""))
 
     confidence = 1.0
     eligible = True
@@ -38,14 +39,28 @@ def check_eligibility(product: dict) -> dict:
     # --- 1️⃣ Missing data penalties ---
     if not categories:
         confidence -= 0.25
-        user_tips.append("Check if the product is a candy, soda, or staple item.")
+        user_tips.append("Check the product type — sodas and candies are not eligible, but staple foods are.")
     if not nutrients:
         confidence -= 0.15
     if not ingredients:
         confidence -= 0.10
-        user_tips.append("Check the ingredient list on the package.")
+    if not categories and not ingredients:
+        confidence -= 0.1  # both missing → extra penalty
 
-    # --- 2️⃣ Idaho disallowed categories ---
+    # --- 2️⃣ Ingredient ambiguity ---
+    if ingredients and len(ingredients.split(",")) < 3 and not any(
+        word in ingredients for word in ["sugar", "juice", "milk", "sweetener"]
+    ):
+        confidence -= 0.1
+        user_tips.append("Ingredient list is minimal or vague; verify the label for clarity.")
+
+    # --- 3️⃣ Category genericness ---
+    if categories and len(categories) <= 2 and all(
+        kw in categories[0] for kw in ["beverages", "foods"]
+    ):
+        confidence -= 0.05  # mild penalty for generic categories
+
+    # --- 4️⃣ Idaho disallowed categories ---
     banned_categories = {
         "en:candies", "en:carbonated-soft-drinks", "en:energy-drinks",
         "en:sweetened-beverages", "en:sugar-sweetened-beverages"
@@ -55,9 +70,9 @@ def check_eligibility(product: dict) -> dict:
         eligible = False
         reason = "Candy, soda, or sweetened beverage not covered under Idaho SNAP (HB109)."
 
-    # --- 3️⃣ Idaho 2026 sweetened beverage ban ---
+    # --- 5️⃣ Idaho 2026 sweetened beverage ban ---
     if eligible and any("beverages" in cat or "drinks" in cat for cat in categories):
-        sweetener_keywords = [
+        sweetener_keywords = [ 
             "sugar", "corn syrup", "high fructose", "stevia", "sucralose",
             "aspartame", "acesulfame", "monk fruit", "saccharin", "honey"
         ]
@@ -68,31 +83,53 @@ def check_eligibility(product: dict) -> dict:
         mixable = any(word in name for word in ["mix", "powder", "concentrate"])
 
         if has_sweetener:
+            # Coca-Cola Zero–like products: artificially sweetened, no sugar info
+            if "aspartame" in ingredients or "sucralose" in ingredients or "acesulfame" in ingredients:
+                confidence -= 0.1  # confident it's banned, but uncertain nuance
             if not milk_based and juice_percent <= 50 and not mixable:
                 eligible = False
                 reason = (
                     "Banned under Idaho 2026 rule: sweetened nonalcoholic beverages not eligible "
                     "unless >50% juice, milk-based, or mixable."
                 )
-            # Only add tips about juice/mixable if confidence is already low (optional)
         else:
+            # Heuristic juice estimation (no explicit %)
+            if "juice" in ingredients and not re.search(r'\d{1,3}\s*%', ingredients):
+                confidence -= 0.15
+                user_tips.append(
+                "Juice mentioned but no % provided so estimate may be uncertain; check the label for exact juice content. "
+                "If there's at least 50% juice, it's eligible"
+                )
+                juice_potential = True
             # --- Sweetener unknown / missing ---
             if not nutrients.get("total_sugars_g"):
                 eligible = None
                 confidence = min(confidence, 0.7)
                 reason = "Insufficient data to determine eligibility."
-                user_tips.append(
-                    "Check if this beverage contains natural or artificial sweeteners --> if so, it is likely not eligible."
-                )
+                if (juice_potential == False):
+                    user_tips.append(
+                        "Check if this beverage contains natural or artificial sweeteners. If so, it is most likely not eligible."
+                    )    
 
-    # --- 4️⃣ Federal disallowed items ---
+        # Edge case: borderline juice %
+        if 40 <= juice_percent <= 60:
+            confidence -= 0.05
+
+    # --- 6️⃣ Federal disallowed items ---
     federal_disallowed_keywords = ["alcohol", "hot", "supplement"]
     federal_disallowed_categories = ["en:dietary-supplements"]
-    if any(f in name for f in federal_disallowed_keywords) or any(c in categories for c in federal_disallowed_categories):
+    if any(f in name for f in federal_disallowed_keywords) or any(
+        c in categories for c in federal_disallowed_categories
+    ):
         eligible = False
         reason = "Federal rule: hot foods, alcohol, and supplements not eligible."
 
-    # --- 5️⃣ Confidence threshold ---
+    # --- 7️⃣ Non-US barcode → minor uncertainty
+    if barcode and not barcode.startswith(("0", "1")):
+        confidence -= 0.1
+        user_tips.append("Barcode may not correspond to a U.S. product; verify country of origin.")
+
+    # --- 8️⃣ Confidence threshold ---
     if confidence < 0.6:
         return {
             "eligible": None,
@@ -105,10 +142,11 @@ def check_eligibility(product: dict) -> dict:
     return {
         "eligible": eligible,
         "reason": reason or "Eligible under Idaho SNAP policy.",
-        "confidence": round(confidence, 2),
+        "confidence": round(max(confidence, 0.0), 2),
         "policy_version": POLICY_VERSION,
         "user_tips": user_tips
     }
+
 
 def format_off_product(product_info: dict) -> dict:
     """
@@ -137,82 +175,89 @@ def format_off_product(product_info: dict) -> dict:
     }
 
 #tests
-# if __name__ == "__main__":
-#     import json
+if __name__ == "__main__":
+    import json
 
-#     # Original Open Food Facts-like product data
-#     off_products = [
-#         {
-#             "Barcode": "025000040801",
-#             "Name": "Simply Orange With Mango",
-#             "Categories": [
-#                 "en:plant-based-foods-and-beverages",
-#                 "en:beverages",
-#                 "en:plant-based-beverages"
-#             ],
-#             "Ingredients": "Contains orange juice, mango puree, natural flavors.",
-#             "Sugar (g)": 25
-#         },
-#         {
-#             "Barcode": "025000040825",
-#             "Name": "Simply Orange With Pineapple",
-#             "Categories": [
-#                 "en:plant-based-foods-and-beverages",
-#                 "en:beverages",
-#                 "en:plant-based-beverages"
-#             ],
-#             "Ingredients": "Orange and pineapple juices, natural flavors.",
-#             "Sugar (g)": 10
-#         },
-#         {
-#             "Barcode": "028400040044",
-#             "Name": "Chili Cheese Flavored Corn Chips",
-#             "Categories": [
-#                 "en:snacks",
-#                 "en:salty-snacks",
-#                 "en:appetizers",
-#                 "en:chips-and-fries",
-#                 "en:crisps",
-#                 "en:corn-chips"
-#             ],
-#             "Ingredients": (
-#                 "Corn, corn oil, whey, salt, spices, maltodextrin (made from corn), "
-#                 "cheddar cheese (milk, cheese cultures, enzymes), canola oil, potassium chloride, "
-#                 "tomato powder, monosodium glutamate, onion powder, natural flavors, "
-#                 "Romano cheese (cow's milk, cheese cultures, salt, enzymes), dextrose, buttermilk, "
-#                 "sodium caseinate, annatto extracts, cream, salt, citric acid, sunflower oil, "
-#                 "garlic powder, disodium inosinate, disodium guanylate, and caramel color."
-#             ),
-#             "Sugar (g)": 0
-#         },
-#         {
-#             "Barcode": "5449000131805",
-#             "Name": "Coca-Cola Zero",
-#             "Categories": [
-#                 "en:beverages-and-beverages-preparations",
-#                 "en:beverages",
-#                 "en:carbonated-drinks",
-#                 "en:artificially-sweetened-beverages",
-#                 "en:sodas",
-#                 "en:diet-beverages",
-#                 "en:colas",
-#                 "en:diet-sodas",
-#                 "en:diet-cola-soft-drink"
-#             ],
-#             "Ingredients": (
-#                 "carbonated water, colour (caramel e150d), acid (phosphoric acid), "
-#                 "sweeteners (aspartame, acesulfame k), natural flavourings (including caffeine), "
-#                 "acidity regulator (sodium citrates) contains a source of phenylalanine"
-#             ),
-#             "Sugar (g)": None  # undefined
-#         }
-#     ]
+    # Original Open Food Facts-like product data
+    off_products = [
+        {
+            "Barcode": "025000040801",
+            "Name": "Simply Orange With Mango",
+            "Categories": [
+                "en:plant-based-foods-and-beverages",
+                "en:beverages",
+                "en:plant-based-beverages"
+            ],
+            "Ingredients": "Contains orange juice, mango puree, natural flavors.",
+            "Sugar (g)": 25
+        },
+        {
+            "Barcode": "025000040825",
+            "Name": "Simply Orange With Pineapple",
+            "Categories": [
+                "en:plant-based-foods-and-beverages",
+                "en:beverages",
+                "en:plant-based-beverages"
+            ],
+            "Ingredients": "Orange and pineapple juices, natural flavors.",
+            "Sugar (g)": 10
+        },
+        {
+            "Barcode": "028400040044",
+            "Name": "Chili Cheese Flavored Corn Chips",
+            "Categories": [
+                "en:snacks",
+                "en:salty-snacks",
+                "en:appetizers",
+                "en:chips-and-fries",
+                "en:crisps",
+                "en:corn-chips"
+            ],
+            "Ingredients": (
+                "Corn, corn oil, whey, salt, spices, maltodextrin (made from corn), "
+                "cheddar cheese (milk, cheese cultures, enzymes), canola oil, potassium chloride, "
+                "tomato powder, monosodium glutamate, onion powder, natural flavors, "
+                "Romano cheese (cow's milk, cheese cultures, salt, enzymes), dextrose, buttermilk, "
+                "sodium caseinate, annatto extracts, cream, salt, citric acid, sunflower oil, "
+                "garlic powder, disodium inosinate, disodium guanylate, and caramel color."
+            ),
+            "Sugar (g)": 0
+        },
+        {
+            "Barcode": "5449000131805",
+            "Name": "Coca-Cola Zero",
+            "Categories": [
+                "en:beverages-and-beverages-preparations",
+                "en:beverages",
+                "en:carbonated-drinks",
+                "en:artificially-sweetened-beverages",
+                "en:sodas",
+                "en:diet-beverages",
+                "en:colas",
+                "en:diet-sodas",
+                "en:diet-cola-soft-drink"
+            ],
+            "Ingredients": (
+                "carbonated water, colour (caramel e150d), acid (phosphoric acid), "
+                "sweeteners (aspartame, acesulfame k), natural flavourings (including caffeine), "
+                "acidity regulator (sodium citrates) contains a source of phenylalanine"
+            ),
+            "Sugar (g)": None  # undefined
+        }, 
+        {
+            "Barcode": "5449000131000",
+            "Name": "Mystery Drink",
+            "Categories": ["en:fruit-drinks"],
+            "Ingredients": "Contains orange juice, mango puree, natural flavors.",  # empty ingredients, cannot detect sweeteners
+            "Sugar (g)": None     # missing nutrients
+        }
+    ]
 
-#     # Loop through all products
-#     for product_info in off_products:
-#         formatted_product = format_off_product(product_info)
-#         result = check_eligibility(formatted_product)
-#         print(f"Product: {formatted_product['name']}")
-#         print(json.dumps(result, indent=4))
-#         print("\n" + "-"*80 + "\n")
+    # Loop through all products
+    for product_info in off_products:
+        formatted_product = format_off_product(product_info)
+        result = check_eligibility(formatted_product)
+        print(f"Product: {formatted_product['name']}")
+        print(json.dumps(result, indent=4))
+        print("\n" + "-"*80 + "\n")
 
