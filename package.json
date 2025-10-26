@@ -1,0 +1,33 @@
+{
+  "name": "calhacks2025",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "demo": "ts-node scripts/demo.ts"
+  },
+  "devDependencies": {
+  }
+}
+
+{
+  "name": "calhacks2025",
+  "version": "1.0.0",
+  "description": "\"# CalHacks2025\"",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michellesk23/CalHacks2025.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/michellesk23/CalHacks2025/issues"
+  },
+  "homepage": "https://github.com/michellesk23/CalHacks2025#readme",
+  "dependencies": {}
+}
