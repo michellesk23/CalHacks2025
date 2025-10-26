@@ -10,8 +10,8 @@ import {
   Linking,
   ActivityIndicator,
   Platform,
-  NetInfo, // <-- Added for network check, essential for real backend
 } from 'react-native';
+import NetInfoModule from '@react-native-community/netinfo';
 import { CameraView, Camera } from 'expo-camera';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -19,13 +19,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // ⚙️ BACKEND / MOCK CONFIGURATION ⚙️
 // =================================================================
 // 1. Set this to false when your backend is ready.
-const USE_MOCK_DATA = true;
+const USE_MOCK_DATA = false;
 
 // 2. Set your backend URL here.
-// Use 'http://10.0.2.2:3000' for Android Emulator 
-// or 'http://localhost:3000' for iOS Simulator/Web (if your server runs on port 3000)
-// const BASE_URL = 'http://localhost:3000'; 
-// const API_ENDPOINT = `${BASE_URL}/api/check-eligibility`; EDIT THIS
+// Use 'http://10.0.2.2:8000' for Android Emulator
+// or 'http://localhost:8000' for iOS Simulator/Web
+const BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
+const API_ENDPOINT = `${BASE_URL}/eligibility`;
 
 // 3. Mock Data Structure (kept for mock mode)
 const MOCK_DATA = {
@@ -85,7 +85,7 @@ export default function App() {
     loadQueue();
     
     // Setup network status listener for offline handling
-    const unsubscribe = NetInfo.addEventListener(state => {
+    const unsubscribe = NetInfoModule.addEventListener(state => {
         const isOnline = state.isConnected && state.isInternetReachable !== false;
         setIsConnected(isOnline);
     });

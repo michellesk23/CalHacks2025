@@ -1,12 +1,14 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+import requests
 import cv2
 import numpy as np
 from PIL import Image
 import io
 import base64
 from barcode_image import detect_barcode
+from eligibility.ebt_eligibility import check_eligibility
 
 app = FastAPI(title="Barcode Detection API", version="1.0.0")
 
@@ -120,6 +122,66 @@ async def detect_barcode_base64(data: dict):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+
+
+@app.get("/eligibility/{barcode}")
+async def eligibility_lookup(barcode: str):
+    """
+    Lookup product by barcode via OpenFoodFacts and return Idaho SNAP eligibility.
+    """
+    try:
+        off_url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
+        resp = requests.get(off_url, timeout=8)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="OpenFoodFacts upstream error")
+        data = resp.json()
+        if not data or data.get("status") != 1:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        p = data.get("product", {})
+
+        categories = p.get("categories_tags") or []
+        ingredients_text = (
+            p.get("ingredients_text_en")
+            or p.get("ingredients_text")
+            or ""
+        )
+        nutriments = p.get("nutriments") or {}
+        sugar_val = (
+            nutriments.get("sugars")
+            or nutriments.get("sugars_100g")
+            or nutriments.get("sugars_serving")
+        )
+
+        product_payload = {
+            "name": p.get("product_name") or "Unknown Product",
+            "categories": categories,
+            "ingredients": ingredients_text,
+            "nutrients": {"total_sugars_g": sugar_val},
+            "barcode": str(barcode),
+        }
+
+        result = check_eligibility(product_payload)
+
+        image_url = (
+            p.get("image_front_url")
+            or p.get("image_url")
+            or p.get("selected_images", {}).get("front", {}).get("display", {}).get("en")
+        )
+
+        response = {
+            "name": product_payload["name"],
+            "barcode": product_payload["barcode"],
+            "image": image_url,
+            **result,
+        }
+
+        return JSONResponse(content=response)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error determining eligibility: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
