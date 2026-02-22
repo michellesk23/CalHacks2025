@@ -24,7 +24,7 @@ const USE_MOCK_DATA = false;
 // 2. Set your backend URL here.
 // Use 'http://10.0.2.2:8000' for Android Emulator
 // or 'http://localhost:8000' for iOS Simulator/Web
-const BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://10.72.6.245:8000';
+const BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://10.43.201.56:8000';
 const API_ENDPOINT = `${BASE_URL}/eligibility`;
 
 // 4. Toggle sample products visibility
