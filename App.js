@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -24,8 +24,11 @@ const USE_MOCK_DATA = false;
 // 2. Set your backend URL here.
 // Use 'http://10.0.2.2:8000' for Android Emulator
 // or 'http://localhost:8000' for iOS Simulator/Web
-const BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
+const BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://10.72.6.245:8000';
 const API_ENDPOINT = `${BASE_URL}/eligibility`;
+
+// 4. Toggle sample products visibility
+const SHOW_SAMPLE_PRODUCTS = false;
 
 // 3. Mock Data Structure (kept for mock mode)
 const MOCK_DATA = {
@@ -79,6 +82,62 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [queuedScans, setQueuedScans] = useState([]);
   const [isConnected, setIsConnected] = useState(true);
+  const scanLockRef = useRef(false);
+  const lastRequestRef = useRef({ barcode: null, ts: 0 });
+
+  const normalizeBarcode = (raw) => {
+    const digits = String(raw || '').replace(/[^0-9]/g, '');
+    if (digits.length === 11) {
+      return '0' + digits; // pad UPC-A missing leading 0
+    }
+    if (digits.length === 13 && digits.startsWith('0')) {
+      // Many US EAN-13 are UPC-A with leading 0; backend OFF can take either
+      // Keep as 13-digit, but if needed, uncomment to drop leading 0:
+      // return digits.slice(1);
+      return digits;
+    }
+    return digits || String(raw || '');
+  };
+
+  const fetchWithTimeout = async (url, options = {}, timeoutMs = 10000) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      return res;
+    } finally {
+      clearTimeout(id);
+    }
+  };
+
+  const handleWebFile = async (file) => {
+    if (!file) return;
+    try {
+      setLoading(true);
+      const form = new FormData();
+      form.append('file', file);
+
+      const res = await fetch(`${BASE_URL}/detect-barcode`, {
+        method: 'POST',
+        body: form,
+      });
+      if (!res.ok) {
+        Alert.alert('Error', `Image upload failed (status ${res.status}).`);
+        return;
+      }
+      const json = await res.json();
+      if (json && json.success && json.barcode_text) {
+        await checkProduct(String(json.barcode_text));
+      } else {
+        Alert.alert('No barcode found', 'Try another image with a clear barcode.');
+      }
+    } catch (e) {
+      console.log('Upload error', e);
+      Alert.alert('Error', 'Could not process the image.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     getCameraPermissions();
@@ -134,7 +193,18 @@ export default function App() {
   // 🔄 Unified checkProduct function with Backend/Mock switch
   // ------------------------------------------------------------------
   const checkProduct = async (barcode) => {
+    if (loading) return;
     setLoading(true);
+
+    const normalized = normalizeBarcode(barcode);
+
+    // Deduplicate same barcode requests within 5 seconds
+    const now = Date.now();
+    if (lastRequestRef.current.barcode === normalized && (now - lastRequestRef.current.ts) < 5000) {
+      setLoading(false);
+      return;
+    }
+    lastRequestRef.current = { barcode: normalized, ts: now };
 
     if (USE_MOCK_DATA) {
       // 🧪 MOCK DATA PATH (Original logic)
@@ -149,26 +219,26 @@ export default function App() {
 
     if (!isConnected) {
       // 💾 OFFLINE PATH
-      saveToQueue(barcode);
+      saveToQueue(normalized);
       setLoading(false);
       return;
     }
 
     try {
       // 💻 LIVE API PATH
-      const response = await fetch(`${API_ENDPOINT}/${barcode}`, {
+      const url = `${API_ENDPOINT}/${encodeURIComponent(normalized)}`;
+      const response = await fetchWithTimeout(url, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          // Optional: 'Authorization': 'Bearer YOUR_AUTH_TOKEN',
-        },
-      });
+        // headers optional for GET
+      }, 12000);
 
       if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        const suffix = text ? `\n${text}` : '';
         if (response.status === 404) {
-          Alert.alert("Not Found", `Barcode ${barcode} not found.`);
+          Alert.alert("Not Found", `Barcode ${normalized} not found.` + suffix);
         } else {
-          Alert.alert("Server Error", `Status: ${response.status}.`);
+          Alert.alert("Server Error", `Status: ${response.status}.` + suffix);
         }
         return; 
       }
@@ -179,7 +249,9 @@ export default function App() {
       setScreen('result');
 
     } catch (error) {
-      handleError("API call failed. Server offline or unreachable.", error);
+      setScanned(false);
+      const msg = error?.name === 'AbortError' ? 'Request timed out.' : (error?.message || 'Network error');
+      handleError(`API call failed: ${msg}`, error);
     } finally {
       setLoading(false);
     }
@@ -191,6 +263,7 @@ export default function App() {
     setScanned(false);
     setScreen('scan');
     setProductData(null);
+    scanLockRef.current = false;
   };
 
   const openInMaps = (productName) => {
@@ -225,8 +298,41 @@ export default function App() {
             <Text style={styles.heroSubtitle}>
               Tap any product to see instant SNAP eligibility results
             </Text>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => setScreen('camera')}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryButtonText}>Scan with Camera</Text>
+            </TouchableOpacity>
+
+            {Platform.OS === 'web' && (
+              <View style={styles.dropZone}
+                onDragOver={(e) => { e.preventDefault(); }}
+                onDrop={async (e) => {
+                  e.preventDefault();
+                  const files = e.nativeEvent.dataTransfer?.files;
+                  if (files && files.length > 0) {
+                    await handleWebFile(files[0]);
+                  }
+                }}
+              >
+                <Text style={styles.dropZoneTitle}>Drag & Drop an image</Text>
+                <Text style={styles.dropZoneSub}>or click to select</Text>
+                <input
+                  type="file"
+                  accept="image/*"
+                  style={styles.hiddenFileInput}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) await handleWebFile(file);
+                  }}
+                />
+              </View>
+            )}
           </View>
 
+          {SHOW_SAMPLE_PRODUCTS && (
           <View style={styles.productsSection}>
             <Text style={styles.sectionTitle}>Sample Products</Text>
 
@@ -287,6 +393,7 @@ export default function App() {
               </View>
             </TouchableOpacity>
           </View>
+          )}
         </ScrollView>
 
         {queuedScans.length > 0 && (
@@ -297,6 +404,69 @@ export default function App() {
           >
             <Text style={styles.floatingButtonText}>📋 {queuedScans.length}</Text>
           </TouchableOpacity>
+        )}
+
+        {loading && (
+          <View style={styles.loadingOverlay}>
+            <View style={styles.loadingCard}>
+              <ActivityIndicator size="large" color="#34A853" />
+              <Text style={styles.loadingText}>Checking eligibility...</Text>
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  // CAMERA SCREEN
+  if (screen === 'camera') {
+    const handleBarCodeScanned = ({ data }) => {
+      if (scanLockRef.current || scanned) return;
+      scanLockRef.current = true;
+      setScanned(true);
+      checkProduct(String(data));
+    };
+
+    return (
+      <View style={styles.container}>
+        <View style={[styles.header, styles.resultHeader]}>
+          <TouchableOpacity onPress={() => { setScanned(false); setScreen('scan'); }} style={styles.backButton}>
+            <Text style={styles.backButtonText}>← Back</Text>
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Scan Barcode</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+
+        {hasPermission === false ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+            <Text>Camera permission is required to scan barcodes.</Text>
+            <TouchableOpacity
+              style={[styles.primaryButton, { marginTop: 16 }]}
+              onPress={getCameraPermissions}
+            >
+              <Text style={styles.primaryButtonText}>Grant Permission</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={{ flex: 1 }}>
+            {!scanned ? (
+              <CameraView
+                style={styles.cameraView}
+                onBarcodeScanned={handleBarCodeScanned}
+                barcodeScannerSettings={{
+                  barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'code39', 'qr']
+                }}
+              />
+            ) : (
+              <View style={[styles.cameraView, { alignItems: 'center', justifyContent: 'center' }]}>
+                <ActivityIndicator size="large" color="#34A853" />
+                <Text style={[styles.loadingText, { marginTop: 12 }]}>Processing…</Text>
+              </View>
+            )}
+            <View style={styles.cameraFooter}>
+              <Text style={styles.cameraHint}>Align the barcode within the frame</Text>
+            </View>
+          </View>
         )}
 
         {loading && (
@@ -650,8 +820,64 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#202124',
   },
+  primaryButton: {
+    backgroundColor: '#1a73e8',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginTop: 16,
+  },
+  primaryButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   resultContainer: {
     flex: 1,
+  },
+  cameraView: {
+    flex: 1,
+  },
+  cameraFooter: {
+    position: 'absolute',
+    bottom: 30,
+    width: '100%',
+    alignItems: 'center',
+  },
+  cameraHint: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    color: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  dropZone: {
+    width: '100%',
+    marginTop: 16,
+    paddingVertical: 24,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
+    borderStyle: 'dashed',
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: '#fafafa'
+  },
+  dropZoneTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#202124',
+  },
+  dropZoneSub: {
+    fontSize: 12,
+    color: '#5f6368',
+    marginTop: 6,
+  },
+  hiddenFileInput: {
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    opacity: 0,
+    cursor: 'pointer'
   },
   imageContainer: {
     backgroundColor: '#fff',

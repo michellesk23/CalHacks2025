@@ -54,6 +54,7 @@ def check_eligibility(product: dict) -> dict:
     eligible = True
     reason = None
     user_tips = []
+    juice_potential = False
     confidence_reasons = []  # track explanations for reduced confidence
 
     sensitive_cats = ("beverage", "drink", "candy", "dessert", "snack", "sweet")
@@ -186,22 +187,30 @@ def check_eligibility(product: dict) -> dict:
 
     # --- 8️⃣ Confidence threshold ---
     if confidence < 0.6:
+        filtered_reasons = [
+            r for r in confidence_reasons
+            if "non-u.s. barcode" not in r.lower() and "non-us barcode" not in r.lower()
+        ]
         return {
             "eligible": None,
             "reason": "Insufficient data to determine eligibility.",
             "confidence": round(confidence, 2),
-            "confidence_reason": ", ".join(confidence_reasons) or "Incomplete or uncertain data",
+            "confidence_reason": ", ".join(filtered_reasons) or "Incomplete or uncertain data",
             "policy_version": POLICY_VERSION,
             "user_tips": user_tips or ["Try scanning again or check the product label."],
             "data_source": product.get("source"),
             "source_meta": product.get("source_meta"),
         }
 
+    filtered_reasons = [
+        r for r in confidence_reasons
+        if "non-u.s. barcode" not in r.lower() and "non-us barcode" not in r.lower()
+    ]
     return {
         "eligible": eligible,
         "reason": reason or "Eligible under Idaho SNAP policy.",
         "confidence": round(max(confidence, 0.0), 2),
-        "confidence_reason": ", ".join(confidence_reasons) or "Full confidence",
+        "confidence_reason": ", ".join(filtered_reasons) or "Full confidence",
         "policy_version": POLICY_VERSION,
         "user_tips": user_tips,
         # Echo back data origin if provided by the caller (e.g., "off" or "fdc")
